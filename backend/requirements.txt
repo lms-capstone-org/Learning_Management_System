@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+firebase-admin
+azure-identity
+azure-storage-blob
+azure-cognitiveservices-speech
+openai
+requests
+python-multipart
