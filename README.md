@@ -1,5 +1,5 @@
 
-# 🎓 AI-Powered Learning Management System (LMS) testing
+# 🎓 AI-Powered Learning Management System (LMS) testing with team
 
 > A modern, hybrid-cloud educational platform that uses AI to automatically transcribe and summarize lecture videos.
 
