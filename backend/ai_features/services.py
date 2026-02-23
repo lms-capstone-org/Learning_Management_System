@@ -9,6 +9,12 @@ from openai import AzureOpenAI
 from firebase_admin import firestore
 from core.config import settings
 from core.database import db
+from pinecone import Pinecone
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# --- INITIALIZE PINECONE ---
+pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+pinecone_index = pc.Index(settings.PINECONE_INDEX_NAME)
 from ai_features.ai_quiz.quiz_generator import generate_quiz
 
 # --- INITIALIZE AZURE CLIENTS (AAD AUTH) ---
@@ -18,7 +24,11 @@ blob_service_client = BlobServiceClient(
     account_url=settings.AZURE_STORAGE_ACCOUNT_URL,
     credential=credential
 )
-
+openai_client = AzureOpenAI(
+    api_key=settings.AZURE_OPENAI_API_KEY,
+    api_version=settings.AZURE_OPENAI_API_VERSION,  # or your version
+    azure_endpoint=settings.AZURE_OPENAI_ENDPOINT
+)
 
 def upload_transcript_to_blob(text_content, course_id, module_id):
     """
@@ -43,6 +53,59 @@ def upload_transcript_to_blob(text_content, course_id, module_id):
         print(f"❌ Failed to upload transcript to blob: {e}")
         raise e
 
+def ingest_to_pinecone(transcript_text, course_id, module_id):
+    """
+    Chunks the transcript text, creates embeddings, and upserts to Pinecone.
+    Uses 'course_id' as the namespace.
+    """
+    print(f"🌲 Step 5: Ingesting into Pinecone (Namespace: {course_id})...")
+    
+    try:
+        # 1. Chunk the text
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = splitter.split_text(transcript_text)
+
+        # 2. Initialize OpenAI Client for Embeddings
+        client = AzureOpenAI(
+            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+            api_key=settings.AZURE_OPENAI_API_KEY,
+            api_version=settings.AZURE_OPENAI_API_VERSION
+        )
+
+        vectors = []
+
+        # 3. Process Chunks
+        for i, chunk in enumerate(chunks):
+            # Generate Embedding
+            response = client.embeddings.create(
+                input=chunk,
+                model=settings.AZURE_DEPLOYMENT_NAME_EMBEDDING # Ensure this is in your config/env
+            )
+            embedding = response.data[0].embedding
+            
+            # Create Unique Vector ID
+            vector_id = f"{module_id}_{i}"
+
+            # Prepare Metadata
+            metadata = {
+                "text": chunk,
+                "module_id": module_id,
+                "course_id": course_id,
+                "chunk_index": i
+            }
+
+            vectors.append((vector_id, embedding, metadata))
+
+        # 4. Upsert to Pinecone
+        # Batching is automatic in some clients, but for safety with large transcripts:
+        pinecone_index.upsert(vectors=vectors, namespace=course_id)
+        
+        print(f"✅ Upserted {len(vectors)} chunks to Pinecone.")
+        return True
+
+    except Exception as e:
+        print(f"❌ Pinecone Ingestion Failed: {e}")
+        raise e
 
 def run_ai_pipeline(video_sas_url, course_id, module_id, video_name):
     print(f"🚀 Starting AI Pipeline for Module: {module_id}")
@@ -55,7 +118,8 @@ def run_ai_pipeline(video_sas_url, course_id, module_id, video_name):
         "status": "transcribing",
         "linked_course_id": course_id,
         "linked_module_id": module_id,
-        "created_at": firestore.SERVER_TIMESTAMP
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "is_vectorized": False 
     }, merge=True)
 
     try:
@@ -145,6 +209,22 @@ def run_ai_pipeline(video_sas_url, course_id, module_id, video_name):
         print("📝 Step 4: Generating Quiz...")
         questions = generate_quiz(transcript_text)
 
+        # --- STEP 5: VECTORIZE ---
+        print("🌲 Step 5: Ingesting into Pinecone...")
+        ingest_to_pinecone(transcript_text, course_id, module_id)
+
+                # --- FINAL SAVE ---
+        doc_ref.update({
+            "status": "completed",
+            "summary_markdown": summary_md,
+            "questions": questions,
+            "model_used": settings.AZURE_OPENAI_DEPLOYMENT,
+            "quiz_generated_at": firestore.SERVER_TIMESTAMP,
+            "is_vectorized": True
+        })
+
+
+        
 
       
 
@@ -166,4 +246,68 @@ def run_ai_pipeline(video_sas_url, course_id, module_id, video_name):
             "error": str(e)
         })
 
+# ... (Previous code in services.py) ...
 
+def generate_course_answer(course_id: str, question: str):
+    """
+    RAG Logic:
+    1. Embeds the user question.
+    2. Searches Pinecone ONLY within the 'course_id' namespace.
+    3. Sends context + question to Azure OpenAI.
+    """
+    print(f"💬 Chatting with Course: {course_id}")
+
+    try:
+        # 1. Embed Question
+        # Ensure you have AZURE_DEPLOYMENT_NAME_EMBEDDING in your settings
+        emb_response = openai_client.embeddings.create(
+            input=question,
+            model=settings.AZURE_DEPLOYMENT_NAME_EMBEDDING
+        )
+        query_vector = emb_response.data[0].embedding
+
+        # 2. Query Pinecone (Strict Namespace Isolation)
+        # We request the top 5 most relevant chunks
+        search_results = pinecone_index.query(
+            vector=query_vector,
+            namespace=course_id,  # <--- CRITICAL: This restricts search to this course only
+            top_k=5,
+            include_metadata=True
+        )
+
+        # 3. Construct Context
+        context_texts = []
+        for match in search_results.matches:
+            # Only use matches with a decent similarity score (optional guardrail)
+            if match.score > 0.70: 
+                context_texts.append(match.metadata['text'])
+        
+        # If no relevant context found
+        if not context_texts:
+            return "I couldn't find any information in the course materials related to your question."
+
+        full_context = "\n\n".join(context_texts)
+
+        # 4. Generate Answer via GPT-4
+        system_prompt = f"""You are an AI Tutor for the course ID '{course_id}'.
+        Answer the student's question based ONLY on the context provided below.
+        If the answer is not in the context, state that you don't know.
+        
+        Context from Course Materials:
+        {full_context}
+        """
+
+        response = openai_client.chat.completions.create(
+            model=settings.AZURE_OPENAI_DEPLOYMENT,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.5 # Lower temperature for more factual answers
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        print(f"❌ Chat Error: {e}")
+        raise e
