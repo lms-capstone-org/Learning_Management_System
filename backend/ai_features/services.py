@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import requests
@@ -138,13 +139,67 @@ def run_ai_pipeline(video_sas_url, course_id, module_id, video_name):
             ]
         )
         summary_md = response.choices[0].message.content
+        
+                # --- STEP 4: QUIZ GENERATION ---
+        print("📝 Step 4: Generating Quiz...")
+
+        quiz_response = client.chat.completions.create(
+            model=settings.AZURE_OPENAI_DEPLOYMENT,
+            temperature=0.3,
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+You are an expert tutor.
+
+Generate 7 multiple-choice questions based only on the transcript.
+
+Rules:
+- Each question must test a different concept
+- 4 options (A, B, C, D)
+- One correct answer
+- Include short explanation
+- Include concept label
+- Return STRICT JSON
+
+Format:
+{
+  "questions": [
+    {
+      "question_id": "q1",
+      "question": "...",
+      "options": {
+        "A": "...",
+        "B": "...",
+        "C": "...",
+        "D": "..."
+      },
+      "correct_answer": "A",
+      "explanation": "...",
+      "concept": "..."
+    }
+  ]
+}
+"""
+                },
+                {"role": "user", "content": transcript_text[:15000]}
+            ],
+            response_format={"type": "json_object"}
+        )
+
+        quiz_content = quiz_response.choices[0].message.content
+        quiz_data = json.loads(quiz_content)
+
 
         # --- STEP 4: SAVE FINAL RESULTS ---
         doc_ref.update({
-            "status": "completed",
-            "summary_markdown": summary_md,
-            "model_used": settings.AZURE_OPENAI_DEPLOYMENT
-        })
+    "status": "completed",
+    "summary_markdown": summary_md,
+    "questions": quiz_data.get("questions", []),
+    "model_used": settings.AZURE_OPENAI_DEPLOYMENT,
+    "quiz_generated_at": firestore.SERVER_TIMESTAMP
+})
+
         print(f"🎉 AI Pipeline Finished for Module: {module_id}")
 
     except Exception as e:
