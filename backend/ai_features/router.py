@@ -1,17 +1,20 @@
-
+from pydantic import BaseModel
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
 from datetime import datetime, timedelta
 import uuid
 
 # Imports from your project structure
 from core.config import settings
-from ai_features.services import run_ai_pipeline, blob_service_client  # Importing the client we set up in services
+from ai_features.services import run_ai_pipeline, blob_service_client, generate_course_answer  # Importing the client we set up in services
 
 # Import specific Azure Blob types for SAS generation
 from azure.storage.blob import generate_blob_sas, BlobSasPermissions
 
 router = APIRouter()
 
+class ChatRequest(BaseModel):
+    course_id: str
+    question: str
 
 def generate_test_sas(blob_path: str):
     """
@@ -104,6 +107,30 @@ async def test_ai_pipeline(
 
 
 
+# --- NEW CHAT ENDPOINT ---
+@router.post("/chat")
+async def chat_with_course(request: ChatRequest):
+    """
+    RAG Chat Endpoint:
+    1. Accepts course_id and question.
+    2. Searches Pinecone namespace matching course_id.
+    3. Returns AI answer based on transcript context.
+    """
+    try:
+        if not request.course_id or not request.question:
+            raise HTTPException(status_code=400, detail="course_id and question are required")
+
+        answer = generate_course_answer(request.course_id, request.question)
+        
+        return {
+            "course_id": request.course_id,
+            "question": request.question,
+            "answer": answer
+        }
+
+    except Exception as e:
+        print(f"Error in chat endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
