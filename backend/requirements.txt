@@ -8,3 +8,4 @@ azure-cognitiveservices-speech
 openai
 requests
 python-multipart
+pydantic

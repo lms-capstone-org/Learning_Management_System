@@ -1,7 +1,6 @@
-
-
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from datetime import datetime
+from core.security import require_instructor
 from firebase_admin import firestore
 
 # Imports from Core
@@ -19,7 +18,7 @@ async def upload_video(
     background_tasks: BackgroundTasks,  # <--- INJECT BACKGROUND TASKS
     file: UploadFile = File(...),
     title: str = Form(...),
-    user: dict = Depends(get_current_user) 
+    user: dict = Depends(require_instructor) 
 ):
     try:
         instructor_id = user['uid']
