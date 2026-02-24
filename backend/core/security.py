@@ -67,3 +67,9 @@ def require_auth(user: dict = Depends(get_current_user)):
     if user["role"] not in ["admin","instructor","student"] :
         raise HTTPException(status_code=403, detail="Access denied.")
     return user
+
+
+def require_instructor_or_admin(user: dict = Depends(get_current_user)):
+    if user["role"] not in ["instructor", "admin"]:
+        raise HTTPException(status_code=403, detail="Instructor or Admin access required.")
+    return user

@@ -53,7 +53,8 @@ class AdminService:
                 query = query.start_after(last_doc)
             # if cursor doc doesn't exist, just ignore and fetch from beginning
 
-        docs = query.limit(limit).stream()
+        fetch_limit = limit * 5 if (role and search) else limit
+        docs = query.limit(fetch_limit).stream()
 
         users = []
         last_uid = None
@@ -67,8 +68,9 @@ class AdminService:
             users.append(data)
             last_uid = doc.id
 
+        trimmed = users[:limit]
         return {
-            "users": users,
-            "next_cursor": last_uid,
+            "users": trimmed,
+            "next_cursor": last_uid if len(trimmed) == limit else None,
             "limit": limit
         }

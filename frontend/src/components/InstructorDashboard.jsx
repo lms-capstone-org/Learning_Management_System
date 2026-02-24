@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import api from '../api'; // Import the secure API helper
+import api from '../api';
 
 function InstructorDashboard({ user }) {
   const [file, setFile] = useState(null);
@@ -13,10 +13,7 @@ function InstructorDashboard({ user }) {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("title", file.name);
-      // NOTE: We do NOT need to send instructor_id anymore.
-      // The backend extracts it securely from the Token.
 
-      // 👇 Uses new Endpoint + Auto-Token
       await api.post("/courses/upload", formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -38,19 +35,19 @@ function InstructorDashboard({ user }) {
         <p style={{ color: '#6b7280', marginBottom: '30px' }}>
           Upload a video to the Course Catalog.
         </p>
-        
-        <input 
+
+        <input
           className="file-input"
-          type="file" 
-          accept="video/mp4" 
-          onChange={(e) => setFile(e.target.files[0])} 
+          type="file"
+          accept="video/mp4"
+          onChange={(e) => setFile(e.target.files[0])}
         />
-        
+
         {file && <p style={{ marginTop: '10px', fontWeight: 600 }}>{file.name}</p>}
 
-        <button 
-          className="upload-btn" 
-          onClick={handleUpload} 
+        <button
+          className="upload-btn"
+          onClick={handleUpload}
           disabled={uploading || !file}
         >
           {uploading ? "Uploading..." : "Start Upload"}
