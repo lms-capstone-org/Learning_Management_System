@@ -5,6 +5,8 @@ from courses.router import router as courses_router
 from ai_features.router import router as ai_router
 from admin.router import router as admin_router   # added this
 from users.router import router as users_router
+from users.router import core_router              # line 8
+app.include_router(core_router, tags=["Core Processing"])  #core_router mount
 
 app = FastAPI()
 
