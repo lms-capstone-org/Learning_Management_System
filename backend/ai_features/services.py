@@ -171,3 +171,17 @@ def grade_quiz_answer(
             "feedback": "Error during grading",
             "score": 0.5
         }
+
+def grade_quiz(answers):
+    # Example: fetch correct answers from Firestore "ai_assets"
+    # For demo: mock data, grade all correct
+    if not answers:
+        return 0, False
+    correct = 0
+    # In production, fetch correct answers and compare
+    for ans in answers:
+        if ans.get("is_correct"):
+            correct += 1
+    score = int(100 * correct / len(answers))
+    completed = score > 80
+    return score, completed

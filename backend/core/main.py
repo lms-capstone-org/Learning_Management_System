@@ -4,6 +4,9 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from datetime import datetime
 import traceback
+from fastapi import Request, HTTPException
+from fastapi.responses import JSONResponse
+
 
 # Import your modules
 from core.database import db
@@ -111,5 +114,18 @@ async def root():
         data={
             "version": "1.0.0",
             "docs": "/docs"
+        }
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    code = getattr(exc, "status_code", 500)
+    msg = getattr(exc, "detail", str(exc))
+    return JSONResponse(
+        status_code=code,
+        content={
+            "status": "error",
+            "message": msg,
+            "code": code
         }
     )

@@ -106,3 +106,12 @@ def grade_quiz_answer(
             "feedback": "Error during grading",
             "score": 0.5
         }
+
+@router.post("/submit-quiz")
+async def submit_quiz(payload: dict, user: dict = Depends(get_current_user)):
+    from ai_features.services import grade_quiz
+    # Payload should contain: module_id, answers, etc.
+    score, completed = grade_quiz(payload.get("answers", []))
+    if completed and payload.get("module_id"):
+        db.collection("modules").document(payload["module_id"]).update({"completed": True})
+    return {"score": score, "completed": completed}
