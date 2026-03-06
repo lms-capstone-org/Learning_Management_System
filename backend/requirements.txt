@@ -8,3 +8,5 @@ azure-cognitiveservices-speech
 openai
 requests
 python-multipart
+pinecone-client
+langchain-text-splitters
