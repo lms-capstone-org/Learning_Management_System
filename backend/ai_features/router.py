@@ -1,5 +1,8 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
+from core.database import db
+# Import the logic functions from your new tts file
+from ai_features.tts.tts import clean_markdown, translate_text, synthesize_speech_to_stream, VOICE_MAP
+from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Query, Response
 from datetime import datetime, timedelta
 import uuid
 
@@ -133,6 +136,50 @@ async def chat_with_course(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- NEW TTS ENDPOINT ---
+@router.get("/tts/stream")
+async def stream_audio_summary(
+        module_id: str,
+        lang: str = Query(..., description="Target language code (e.g., 'es', 'hi')")
+):
+    """
+    Streams the audio summary of a module in the requested language.
+    """
+    try:
+        # 1. Validation
+        if lang not in VOICE_MAP:
+            raise HTTPException(status_code=400,
+                                detail=f"Language '{lang}' not supported. Available: {list(VOICE_MAP.keys())}")
+
+        # 2. Fetch Module Data from Firestore
+        doc_ref = db.collection("ai_assets").document(module_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Module AI assets not found")
+
+        data = doc.to_dict()
+        summary_md = data.get("summary_markdown")
+
+        if not summary_md:
+            raise HTTPException(status_code=404, detail="Summary not generated for this module yet.")
+
+        # 3. Clean Markdown
+        clean_text = clean_markdown(summary_md)
+
+        # 4. Translate
+        # Note: If text is long, consider truncating or splitting. Azure limits apply.
+        final_text = translate_text(clean_text, lang)
+
+        # 5. Generate Audio Bytes
+        audio_bytes = synthesize_speech_to_stream(final_text, lang)
+
+        # 6. Return Streaming Response
+        return Response(content=audio_bytes, media_type="audio/wav")
+
+    except Exception as e:
+        print(f"TTS Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
