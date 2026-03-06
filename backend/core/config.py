@@ -21,4 +21,6 @@ class Settings:
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
 
+    AZURE_SPEECH_REGION=os.getenv("AZURE_SPEECH_REGION")
+
 settings = Settings()
