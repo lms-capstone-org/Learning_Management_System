@@ -5,6 +5,8 @@ from ai_features.tts.tts import clean_markdown, translate_text, synthesize_speec
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Query, Response
 from datetime import datetime, timedelta
 import uuid
+from core.database import db
+from fastapi import APIRouter, HTTPException
 
 # Imports from your project structure
 from core.config import settings
@@ -179,6 +181,27 @@ async def stream_audio_summary(
 
     except Exception as e:
         print(f"TTS Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/module/{module_id}")
+async def get_module_ai_assets(module_id: str):
+    """Fetches the generated AI Summary and Quiz Questions for a module."""
+    try:
+        doc_ref = db.collection("ai_assets").document(module_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return {"status": "processing"}  # AI hasn't finished yet
+
+        data = doc.to_dict()
+        return {
+            "status": data.get("status", "processing"),
+            "summary_markdown": data.get("summary_markdown", ""),
+            "questions": data.get("questions", [])
+        }
+    except Exception as e:
+        print(f"Error fetching AI assets: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

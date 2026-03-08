@@ -236,6 +236,9 @@ def run_ai_pipeline(video_sas_url, course_id, module_id, video_name):
     "model_used": settings.AZURE_OPENAI_DEPLOYMENT,
     "quiz_generated_at": firestore.SERVER_TIMESTAMP
 })
+        db.collection("courses").document(course_id).collection("modules").document(module_id).update({
+            "status": "completed"
+        })
 
         print(f"🎉 AI Pipeline Finished for Module: {module_id}")
 
