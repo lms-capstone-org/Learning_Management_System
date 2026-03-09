@@ -10,3 +10,4 @@ requests
 python-multipart
 pydantic
 email-validator
+pydantic[email]
