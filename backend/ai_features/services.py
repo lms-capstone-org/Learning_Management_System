@@ -4,8 +4,6 @@ from openai import AzureOpenAI
 from firebase_admin import firestore
 from core.config import settings
 from core.database import db
-from openai import AzureOpenAI
-from core.config import settings
 
 def run_ai_pipeline(video_id, blob_url, video_name):
     print(f"🚀 Starting AI Pipeline for: {video_name}")
