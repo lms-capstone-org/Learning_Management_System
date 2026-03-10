@@ -10,3 +10,4 @@ requests
 python-multipart
 pinecone
 langchain-text-splitters
+fpdf2

@@ -85,6 +85,11 @@ from firebase_admin import firestore
 import uuid
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1 import ArrayUnion
+import smtplib
+from email.message import EmailMessage
+from fpdf import FPDF
+from core.config import settings
+from pydantic import BaseModel
 
 
 # Imports from Core
@@ -95,13 +100,20 @@ from courses.services import upload_blob, generate_read_sas
 # Import the AI Pipeline function
 from ai_features.services import run_ai_pipeline
 
+class QuizAttempt(BaseModel):
+    score: int
+    total_questions: int
+    passed: bool
+
+
 router = APIRouter()
 
 
 @router.post("/")
 async def create_course(
         title: str = Form(...),
-        category: str = Form("GenAi"),  # 🆕 Added Category
+        category: str = Form("GenAi"),
+        description: str = Form(...),  # 🆕 Add this line to accept the description
         user: dict = Depends(get_current_user)
 ):
     """Creates a new top-level course."""
@@ -112,7 +124,8 @@ async def create_course(
         course_data = {
             "id": doc_ref.id,
             "title": title,
-            "category": category,  # 🆕 Save to Firestore
+            "category": category,
+            "description": description,  # 🆕 Save description to Firestore
             "instructor_id": instructor_id,
             "is_published": False,
             "created_at": firestore.SERVER_TIMESTAMP
@@ -253,17 +266,41 @@ async def get_course_modules(course_id: str, user: dict = Depends(get_current_us
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{course_id}/modules/{module_id}/complete")
-async def complete_module(course_id: str, module_id: str, user: dict = Depends(get_current_user)):
-    """Marks a module as completed in the student's enrollment data (Unlocks the next one)."""
+
+@router.post("/{course_id}/modules/{module_id}/quiz-attempt")
+async def record_quiz_attempt(
+        course_id: str,
+        module_id: str,
+        attempt: QuizAttempt,
+        user: dict = Depends(get_current_user)
+):
+    """Records a quiz attempt. If passed, also marks the module as completed."""
     try:
         user_ref = db.collection("users").document(user['uid'])
-        # Atomically add the module_id to the completed_modules array
-        user_ref.update({
-            f"enrollments.{course_id}.completed_modules": ArrayUnion([module_id])
-        })
-        return {"message": "Module completed successfully!"}
+
+        # 1. Prepare the attempt record
+        attempt_data = {
+            "score": attempt.score,
+            "total_questions": attempt.total_questions,
+            "passed": attempt.passed,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        # 2. Add the attempt to the user's quiz_results history for this specific module
+        update_payload = {
+            f"enrollments.{course_id}.quiz_results.{module_id}": ArrayUnion([attempt_data])
+        }
+
+        # 3. If they passed, ALSO add the module to completed_modules (unlocks next module)
+        if attempt.passed:
+            update_payload[f"enrollments.{course_id}.completed_modules"] = ArrayUnion([module_id])
+
+        # 4. Perform the update in Firestore
+        user_ref.update(update_payload)
+
+        return {"message": "Quiz attempt recorded successfully!"}
     except Exception as e:
+        print(f"❌ Error recording quiz attempt: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/my-profile")
@@ -371,4 +408,102 @@ async def get_course_analytics(course_id: str, user: dict = Depends(get_current_
         return {"total_modules": total_modules, "students": analytics}
     except Exception as e:
         print(f"Error fetching analytics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def generate_and_send_certificate(user_email: str, username: str, course_title: str):
+    """Generates a PDF certificate in memory and emails it to the student."""
+    try:
+        # 1. Generate PDF
+        pdf = FPDF(orientation="L", unit="mm", format="A4")
+        pdf.add_page()
+        pdf.set_font("helvetica", size=30)
+        pdf.cell(0, 50, text="Certificate of Completion", new_x="LMARGIN", new_y="NEXT", align="C")
+
+        pdf.set_font("helvetica", size=20)
+        pdf.cell(0, 30, text="This certifies that", new_x="LMARGIN", new_y="NEXT", align="C")
+
+        pdf.set_font("helvetica", style="B", size=26)
+        pdf.set_text_color(79, 70, 229)  # Indigo color
+        pdf.cell(0, 20, text=username, new_x="LMARGIN", new_y="NEXT", align="C")
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("helvetica", size=20)
+        pdf.cell(0, 20, text="has successfully completed the masterclass in", new_x="LMARGIN", new_y="NEXT", align="C")
+
+        pdf.set_font("helvetica", style="B", size=24)
+        pdf.cell(0, 20, text=course_title, new_x="LMARGIN", new_y="NEXT", align="C")
+
+        # Get PDF as bytes
+        pdf_bytes = bytes(pdf.output())
+
+        # 2. Construct Email
+        msg = EmailMessage()
+        msg['Subject'] = f"🎓 Your Certificate for {course_title}"
+        msg['From'] = settings.SENDER_EMAIL
+        msg['To'] = user_email
+        msg.set_content(
+            f"Hi {username},\n\n"
+            f"Congratulations on successfully completing '{course_title}'!\n\n"
+            f"Please find your official certificate of completion attached to this email.\n\n"
+            f"Keep up the great work!\n"
+            f"- LMS Capstone Team"
+        )
+
+        # Attach PDF
+        clean_title = course_title.replace(" ", "_")
+        msg.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename=f"{clean_title}_Certificate.pdf")
+
+        # 3. Send Email via SMTP
+        with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
+            server.starttls()
+            server.login(settings.SENDER_EMAIL, settings.SENDER_PASSWORD)
+            server.send_message(msg)
+
+        print(f"✅ Certificate emailed to {user_email}")
+    except Exception as e:
+        print(f"❌ Failed to send certificate email: {e}")
+
+
+@router.post("/{course_id}/graduate")
+async def graduate_student(
+        course_id: str,
+        background_tasks: BackgroundTasks,
+        user: dict = Depends(get_current_user)
+):
+    """Triggers the certificate generation and emails it."""
+    try:
+        # 1. Fetch User Data (to get their username)
+        user_doc = db.collection("users").document(user['uid']).get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_data = user_doc.to_dict()
+        username = user_data.get("username", "Student")
+        user_email = user_data.get("email")
+
+        # 2. Fetch Course Data (to get the title)
+        course_doc = db.collection("courses").document(course_id).get()
+        if not course_doc.exists:
+            raise HTTPException(status_code=404, detail="Course not found")
+
+        course_title = course_doc.to_dict().get("title", "Course")
+
+        # 3. Update Firestore to mark course as fully graduated (Optional but good practice)
+        db.collection("users").document(user['uid']).set({
+            "enrollments": {
+                course_id: {
+                    "certificate_issued": True,
+                    "graduated_at": firestore.SERVER_TIMESTAMP
+                }
+            }
+        }, merge=True)
+
+        # 4. Trigger Email in the background
+        background_tasks.add_task(generate_and_send_certificate, user_email, username, course_title)
+
+        return {"message": "Certificate generation started. Check your email shortly!"}
+
+    except Exception as e:
+        print(f"❌ Graduation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

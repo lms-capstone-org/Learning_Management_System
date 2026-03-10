@@ -5,7 +5,7 @@ from core.database import db # Initializes DB on startup
 # Import Routers
 from courses.router import router as courses_router
 from ai_features.router import router as ai_router
-
+from community.router import router as community_router
 app = FastAPI()
 
 app.add_middleware(
@@ -21,6 +21,10 @@ app.include_router(courses_router, prefix="/courses", tags=["Courses"])
 
 # /ai/process-video/{id}
 app.include_router(ai_router, prefix="/ai", tags=["AI Features"])
+
+app.include_router(community_router, prefix="/community", tags=["Community Feed"])
+
+
 
 @app.get("/")
 def health_check():
